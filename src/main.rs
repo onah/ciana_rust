@@ -7,12 +7,12 @@ This software is released under MIT License,
 http://opensource.org/licenses/mit-license.php
 */
 
-extern crate ciana_rust;
+extern crate ciana;
 
 use std::env;
 use std::process;
 
-use ciana_rust::ImpactLocation;
+use ciana::ImpactLocation;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -21,7 +21,7 @@ fn main() {
         process::exit(1);
     });
 
-   if let Err(e) = ciana_rust::run(target) {
+   if let Err(e) = ciana::run(target) {
        println!("Application error: {}", e);
        process::exit(2);
    }

@@ -1,5 +1,5 @@
 [package]
-name = "ciana_rust"
+name = "ciana"
 version = "0.1.0"
 authors = ["Hiroyuki HANO <onah@dwahan.net>"]
 edition = "2018"
