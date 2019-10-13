@@ -9,18 +9,20 @@ http://opensource.org/licenses/mit-license.php
 extern crate clang;
 
 use std::error::Error;
+use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::PathBuf;
 
 #[derive(Debug, PartialEq)]
 pub struct SourceLocation {
-    filename: String,
+    filename: PathBuf,
     line: u32,
     column: u32,
 }
 
 impl SourceLocation {
-    pub fn new(filename: String, line: u32, column: u32) -> SourceLocation {
+    pub fn new(filename: PathBuf, line: u32, column: u32) -> SourceLocation {
         SourceLocation {
             filename,
             line,
@@ -29,32 +31,105 @@ impl SourceLocation {
     }
 }
 
-fn get_reference_location(target: &SourceLocation) -> SourceLocation {
-    SourceLocation {
-        filename: "test_project/c_variable/src/func.c".to_string(),
-        line: 1,
-        column: 1,
+#[derive(Debug, PartialEq)]
+pub enum CianaError {
+    Message(String),
+    Source(clang::SourceError),
+    NoTarget,
+}
+
+impl From<String> for CianaError {
+    fn from(err: String) -> CianaError {
+        CianaError::Message(err)
     }
 }
 
-pub fn run(target: SourceLocation) -> Result<(), Box<dyn Error>> {
-    //let compilation_database_path = get_compilation_database_path().unwrap();
+impl From<clang::SourceError> for CianaError {
+    fn from(err: clang::SourceError) -> CianaError {
+        CianaError::Source(err)
+    }
+}
 
-    let cl = clang::Clang::new().unwrap();
-    let index = clang::Index::new(&cl, false, false);
+impl fmt::Display for CianaError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CianaError::Message(ref err) => write!(f, "Clang Error {}", err),
+            CianaError::Source(ref err) => write!(f, "clang::Source Error {}", err),
+            CianaError::NoTarget => write!(f, "Can't find target"),
+        }
+    }
+}
 
-    let astfile = "";
-
-    let file = target.filename.clone();
-    let tu = clang::TranslationUnit::from_ast(&index, astfile)
-        .map_err(|_e| "TranslationUnit Error".to_owned())?;
-
-    let entity = tu.get_entity();
-    visitor_children(entity, &target);
+pub fn run(target: SourceLocation) -> Result<(), CianaError> {
+    let result = analyze_variables(&target)?;
+    print_location(&result);
 
     Ok(())
 }
 
+fn get_reference_location(target: &SourceLocation) -> Result<SourceLocation, CianaError> {
+    //let compilation_database_path = get_compilation_database_path().unwrap();
+
+    let cl = clang::Clang::new()?;
+    let index = clang::Index::new(&cl, false, false);
+    let tu = index.parser(target.filename.clone()).parse()?;
+
+    let entity = tu.get_entity();
+    match visitor_children_for_reference(entity, &target) {
+        Some(v) => Ok(v),
+        None => Err(CianaError::NoTarget),
+    }
+}
+
+fn analyze_variables(target: &SourceLocation) -> Result<Vec<SourceLocation>, CianaError> {
+    let reference = get_reference_location(&target)?;
+    let variables = get_same_variables_location(&reference)?;
+
+    Ok(variables)
+}
+
+fn get_same_variables_location(target: &SourceLocation) -> Result<Vec<SourceLocation>, CianaError> {
+    let cl = clang::Clang::new()?;
+    let index = clang::Index::new(&cl, false, false);
+    let tu = index.parser(target.filename.clone()).parse()?;
+
+    let entity = tu.get_entity();
+
+    let results = visitor_children_for_variables(entity, &target);
+    Ok(results)
+}
+
+fn visitor_children_for_variables(
+    entity: clang::Entity,
+    target: &SourceLocation,
+) -> Vec<SourceLocation> {
+    let mut results: Vec<SourceLocation> = Vec::new();
+
+    if let Some(r) = entity.get_reference() {
+        if r != entity {
+            if is_same_target(&r, target) {
+                results.push(get_source_location_from_entity(&entity).unwrap());
+                return results;
+            }
+        }
+    }
+
+    let children = entity.get_children();
+    for child in children.iter() {
+        let res = visitor_children_for_variables(*child, target);
+        results.extend(res);
+    }
+
+    results
+}
+
+fn print_location(loc: &Vec<SourceLocation>) {
+    for s in loc.iter() {
+        println!("{:?}", s);
+    }
+}
+
+#[allow(dead_code)]
 fn get_compilation_database_path() -> Result<String, Box<dyn Error>> {
     let mut f = File::open("./.cianarc").expect("file not found.");
     let mut read_text = String::new();
@@ -64,44 +139,78 @@ fn get_compilation_database_path() -> Result<String, Box<dyn Error>> {
     Ok(read_text.trim().to_string())
 }
 
-fn check_target(entity: &clang::Entity, target: &SourceLocation) {
+fn is_same_target(entity: &clang::Entity, target: &SourceLocation) -> bool {
+    //print_entiry_simple(&entity);
+
     let location = match entity.get_location() {
-        None => return,
-        Some(value) => value.get_file_location(),
+        Some(v) => v,
+        None => return false,
     };
 
-    if location.file.unwrap().get_path().to_str().unwrap() == target.filename
-        && location.line == target.line
-        && location.column == target.column
+    let filelocation = location.get_file_location();
+    let file = match filelocation.file {
+        Some(v) => v,
+        None => return false,
+    };
+
+    if file.get_path() == target.filename
+        && filelocation.line == target.line
+        && filelocation.column == target.column
     {
-        println!("ent");
-        print_entiry_simple(&entity);
+        return true;
+    };
 
-        println!("  def");
-        print!("  ");
-        match entity.get_definition() {
-            None => println!(""),
-            Some(v) => print_entiry_simple(&v),
-        };
+    false
+}
 
-        println!("  ref");
-        print!("  ");
-        match entity.get_reference() {
-            None => println!(""),
-            Some(v) => print_entiry_simple(&v),
-        };
+fn get_source_location_from_entity(entity: &clang::Entity) -> Option<SourceLocation> {
+    let location = match entity.get_location() {
+        Some(v) => v,
+        None => return None,
+    };
+
+    let filelocation = location.get_file_location();
+    let file = match filelocation.file {
+        Some(v) => v,
+        None => return None,
+    };
+
+    Some(SourceLocation {
+        filename: file.get_path(),
+        line: filelocation.line,
+        column: filelocation.column,
+    })
+}
+
+fn get_reference_location_from_entiry(entity: &clang::Entity) -> Option<SourceLocation> {
+    if let Some(v) = entity.get_reference() {
+        get_source_location_from_entity(&v)
+    } else {
+        None
     }
 }
 
-fn visitor_children(entity: clang::Entity, target: &SourceLocation) {
-    check_target(&entity, target);
+fn visitor_children_for_reference(
+    entity: clang::Entity,
+    target: &SourceLocation,
+) -> Option<SourceLocation> {
+    let mut result: Option<SourceLocation> = None;
+
+    if is_same_target(&entity, target) {
+        result = get_reference_location_from_entiry(&entity);
+    }
 
     let children = entity.get_children();
     for child in children.iter() {
-        visitor_children(*child, target);
+        if let Some(v) = visitor_children_for_reference(*child, target) {
+            return Some(v);
+        };
     }
+
+    return result;
 }
 
+#[allow(dead_code)]
 fn print_entiry_simple(entity: &clang::Entity) {
     let location = match entity.get_location() {
         None => None,
@@ -135,18 +244,55 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_get_reference_from_local_variable() {
         let target = SourceLocation {
-            filename: "test_project/c_variable/src/func.c".to_string(),
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
+            line: 6,
+            column: 13,
+        };
+        let result = get_reference_location(&target).unwrap();
+        let expect = SourceLocation {
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
+            line: 4,
+            column: 14,
+        };
+
+        assert_eq!(result, expect);
+    }
+
+    #[test]
+    #[ignore]
+    fn no_target_from_get_reference() {
+        let target = SourceLocation {
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
             line: 5,
             column: 13,
         };
         let result = get_reference_location(&target);
-        let expect = SourceLocation {
-            filename: "test_project/c_variable/src/func.c".to_string(),
-            line: 1,
-            column: 1,
+        assert_eq!(result.unwrap_err(), CianaError::NoTarget);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_get_same_variable_location() {
+        let target = SourceLocation {
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
+            line: 4,
+            column: 14,
         };
+        let result = get_same_variables_location(&target).unwrap();
+        let mut expect: Vec<SourceLocation> = Vec::new();
+        expect.push(SourceLocation {
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
+            line: 6,
+            column: 13,
+        });
+        expect.push(SourceLocation {
+            filename: PathBuf::from("test_project/c_variable/src/func.c"),
+            line: 6,
+            column: 28,
+        });
 
         assert_eq!(result, expect);
     }

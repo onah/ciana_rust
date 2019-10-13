@@ -9,6 +9,7 @@ http://opensource.org/licenses/mit-license.php
 use ciana::SourceLocation;
 use std::fmt;
 use std::num;
+use std::path::PathBuf;
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
@@ -25,7 +26,7 @@ impl From<num::ParseIntError> for ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ParseError::Lengths => write!(f, "not enoght argmuments"),
+            ParseError::Lengths => write!(f, "not enough argmuments"),
             ParseError::Parse(ref err) => write!(f, "Parse error: {}", err),
         }
     }
@@ -36,7 +37,7 @@ pub fn run(args: &[String]) -> Result<SourceLocation, ParseError> {
         return Err(ParseError::Lengths);
     }
 
-    let filename = args[1].clone();
+    let filename = PathBuf::from(args[1].clone());
     let line = args[2].parse()?;
     let column = args[3].parse()?;
 
@@ -57,7 +58,7 @@ mod tests {
         ];
 
         let result = run(&args);
-        let correct = SourceLocation::new(String::from("filename"), 1, 2);
+        let correct = SourceLocation::new(PathBuf::from("filename"), 1, 2);
         assert_eq!(result.unwrap(), correct);
     }
 
