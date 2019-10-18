@@ -75,6 +75,13 @@ pub fn run(target: SourceLocation) -> Result<(), CianaError> {
     Ok(())
 }
 
+fn analyze_variables(target: &SourceLocation) -> Result<Vec<SourceLocation>, CianaError> {
+    let reference = get_reference_location(&target)?;
+    let variables = get_same_variables_location(&reference)?;
+
+    Ok(variables)
+}
+
 fn get_reference_location(target: &SourceLocation) -> Result<SourceLocation, CianaError> {
     let cl = clang::Clang::new()?;
     let index = clang::Index::new(&cl, false, false);
@@ -85,13 +92,6 @@ fn get_reference_location(target: &SourceLocation) -> Result<SourceLocation, Cia
         Some(v) => Ok(v),
         None => Err(CianaError::NoTarget),
     }
-}
-
-fn analyze_variables(target: &SourceLocation) -> Result<Vec<SourceLocation>, CianaError> {
-    let reference = get_reference_location(&target)?;
-    let variables = get_same_variables_location(&reference)?;
-
-    Ok(variables)
 }
 
 fn is_global_variable(target: &SourceLocation) -> Result<bool, CianaError> {
@@ -141,34 +141,46 @@ fn absolute_to_relative(
 }
 
 fn get_same_variables_location(target: &SourceLocation) -> Result<Vec<SourceLocation>, CianaError> {
-    let global_variable = is_global_variable(target)?;
+    let search_paths = if is_global_variable(target)? {
+        get_all_complie_source_file()?
+    } else {
+        vec![target.filename.clone().to_path_buf()]
+    };
+
+    let mut all_results = Vec::new();
 
     let cl = clang::Clang::new()?;
     let index = clang::Index::new(&cl, false, false);
 
-    if global_variable {
-        let mut all_results = Vec::new();
-        let compilation_database_path = get_compilation_database_path().unwrap();
-        let compdb = clang::CompilationDatabase::from_directory(compilation_database_path).unwrap();
-        for command in compdb.get_all_compile_commands().get_commands().iter() {
-            let path = command.get_arguments()[4].clone();
-            let path = absolute_to_relative(&std::path::PathBuf::from(path))?;
-            //println!("{:?}", new_path);
+    for path in search_paths {
+        let tu = index.parser(path).parse()?;
+        let entity = tu.get_entity();
 
-            let tu = index.parser(path).parse()?;
-            let entity = tu.get_entity();
+        let results = visitor_children_for_variables(entity, &target);
+        all_results.extend(results);
+    }
+    return Ok(all_results);
+}
 
-            let results = visitor_children_for_variables(entity, &target);
+fn get_all_complie_source_file() -> Result<Vec<std::path::PathBuf>, CianaError> {
+    let mut results = Vec::new();
 
-            all_results.extend(results);
+    let compilation_database_path = get_compilation_database_path()?;
+    let compdb = match clang::CompilationDatabase::from_directory(compilation_database_path) {
+        Ok(v) => v,
+        Err(_e) => {
+            return Err(CianaError::Message(String::from(
+                "CompilationDatabase Open Error",
+            )))
         }
-        return Ok(all_results);
+    };
+
+    for command in compdb.get_all_compile_commands().get_commands().iter() {
+        let path = command.get_arguments()[4].clone();
+        let path = absolute_to_relative(&std::path::PathBuf::from(path))?;
+        results.push(path);
     }
 
-    let tu = index.parser(target.filename.clone()).parse()?;
-    let entity = tu.get_entity();
-
-    let results = visitor_children_for_variables(entity, &target);
     Ok(results)
 }
 
