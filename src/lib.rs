@@ -115,11 +115,7 @@ fn visitor_children_for_global_variable(
     }
 
     if is_same_target(&entity, target) {
-        if is_found {
-            return false;
-        } else {
-            return true;
-        }
+        return !is_found;
     }
 
     let children = entity.get_children();
@@ -127,7 +123,7 @@ fn visitor_children_for_global_variable(
         return visitor_children_for_global_variable(*child, target, is_found);
     }
 
-    return false;
+    false
 }
 
 fn absolute_to_relative(
@@ -159,7 +155,8 @@ fn get_same_variables_location(target: &SourceLocation) -> Result<Vec<SourceLoca
         let results = visitor_children_for_variables(entity, &target);
         all_results.extend(results);
     }
-    return Ok(all_results);
+
+    Ok(all_results)
 }
 
 fn get_all_complie_source_file() -> Result<Vec<std::path::PathBuf>, CianaError> {
