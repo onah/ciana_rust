@@ -86,53 +86,10 @@ fn get_reference_location(target: &SourceLocation) -> Result<SourceLocation, Cia
     let cl = clang::Clang::new()?;
     let index = clang::Index::new(&cl, false, false);
     let tu = index.parser(target.filename.clone()).parse()?;
-
     let entity = tu.get_entity();
     match visitor_children_for_reference(entity, &target) {
         Some(v) => Ok(v),
         None => Err(CianaError::NoTarget),
-    }
-}
-
-fn is_global_variable(target: &SourceLocation) -> Result<bool, CianaError> {
-    let cl = clang::Clang::new()?;
-    let index = clang::Index::new(&cl, false, false);
-    let tu = index.parser(target.filename.clone()).parse()?;
-
-    let entity = tu.get_entity();
-
-    let result = visitor_children_for_global_variable(entity, &target, false);
-    Ok(result)
-}
-
-fn visitor_children_for_global_variable(
-    entity: clang::Entity,
-    target: &SourceLocation,
-    mut is_found: bool,
-) -> bool {
-    if entity.get_kind() == clang::EntityKind::VarDecl && is_found {
-        is_found = true;
-    }
-
-    if is_same_target(&entity, target) {
-        return !is_found;
-    }
-
-    let children = entity.get_children();
-    for child in children.iter() {
-        return visitor_children_for_global_variable(*child, target, is_found);
-    }
-
-    false
-}
-
-fn absolute_to_relative(
-    absolute: &std::path::PathBuf,
-) -> Result<std::path::PathBuf, std::io::Error> {
-    let pwd = env::current_dir()?;
-    match absolute.strip_prefix(pwd) {
-        Ok(v) => Ok(v.to_path_buf()),
-        Err(_e) => Ok(absolute.to_path_buf()),
     }
 }
 
@@ -157,6 +114,47 @@ fn get_same_variables_location(target: &SourceLocation) -> Result<Vec<SourceLoca
     }
 
     Ok(all_results)
+}
+
+fn is_global_variable(target: &SourceLocation) -> Result<bool, CianaError> {
+    let cl = clang::Clang::new()?;
+    let index = clang::Index::new(&cl, false, false);
+    let tu = index.parser(target.filename.clone()).parse()?;
+    let entity = tu.get_entity();
+    let result = visitor_children_for_global_variable(entity, &target, false);
+    Ok(result)
+}
+
+fn visitor_children_for_global_variable(
+    entity: clang::Entity,
+    target: &SourceLocation,
+    mut is_found: bool,
+) -> bool {
+    if entity.get_kind() == clang::EntityKind::FunctionDecl {
+        is_found = true;
+    }
+
+    if is_same_target(&entity, target) {
+        return !is_found;
+    }
+
+    let children = entity.get_children();
+    for child in children.iter() {
+        if visitor_children_for_global_variable(*child, target, is_found) {
+            return true;
+        }
+    }
+    false
+}
+
+fn absolute_to_relative(
+    absolute: &std::path::PathBuf,
+) -> Result<std::path::PathBuf, std::io::Error> {
+    let pwd = env::current_dir()?;
+    match absolute.strip_prefix(pwd) {
+        Ok(v) => Ok(v.to_path_buf()),
+        Err(_e) => Ok(absolute.to_path_buf()),
+    }
 }
 
 fn get_all_complie_source_file() -> Result<Vec<std::path::PathBuf>, CianaError> {
@@ -185,8 +183,6 @@ fn visitor_children_for_variables(
     entity: clang::Entity,
     target: &SourceLocation,
 ) -> Vec<SourceLocation> {
-    // print_entiry_simple(&entity);
-
     let mut results: Vec<SourceLocation> = Vec::new();
 
     // TODO: whether to exclude if the reference is yourself
@@ -428,7 +424,7 @@ mod tests {
     fn test_is_global_variable_from_global() {
         let target = SourceLocation {
             filename: PathBuf::from("test_project/c_variable/src/subfunc.h"),
-            line: 1,
+            line: 2,
             column: 5,
         };
         let result = is_global_variable(&target);

@@ -7,7 +7,7 @@ int subfunc(int x, int y)
 
 int subfunc2(int x, int y)
 {
-  global_value = y;
+  global_value_b = y;
   return x + y;
  
 }
